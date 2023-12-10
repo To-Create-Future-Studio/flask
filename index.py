@@ -1,11 +1,7 @@
-import io
+import os
 import json
-import base64
 import requests
 import sys
-import wx
-import time
-import random
 
 from PIL import Image
 from ultralytics import YOLO
@@ -170,7 +166,7 @@ def getWspotArea(image, mode):
         for key, val in area_dict.items():
             area_index = isInclusion(wspot_xyxy, val['xyxy'], mode)
             if area_index:
-                wspot_area = 0.2 * getRectangularArea(result_wspot.masks.data[index]) / val['rectangular_area'] # 修改此处
+                wspot_area = 0.25 * getRectangularArea(result_wspot.masks.data[index]) / val['rectangular_area'] * 0.87 # 修改此处
                 if mode != 'M':
                     wspot_area /= 2
                 res_area.append(wspot_area)
@@ -184,28 +180,6 @@ def getWspotArea(image, mode):
         image_array = result_wspot.plot(labels=False, boxes=True)
     image = Image.fromarray(image_array[..., ::-1])
     return res_area, res_region, image
-
-# 图像转 image_id
-def encode_image(image_path):
-    return wx.upload_file(image_path)
-
-# 通过 image_id 拿到 image
-def decode_image(image_id):
-    image_data = wx.get_file_by_id(image_id)
-    image = Image.open(image_data)
-    return image
-
-def decode_image_base64(image_base64):
-    image_data = base64.b64decode(image_base64)
-    image = Image.open(io.BytesIO(image_data))
-    return image
-
-def encode_image_base64(image_path):
-    with open(image_path, 'rb') as f:
-        image_data = f.read()
-        image_base64 = base64.b64encode(image_data)
-        # 转 string
-        return image_base64.decode()
 
 # nms
 def calculate_iou(box1, box2):
@@ -252,56 +226,47 @@ app = Flask(__name__)
 @app.route('/process_json', methods=['GET', 'POST'])
 def process_json():
     json_post = json.loads(request.get_data())
+    image_path = json_post['image_path']
 
-    image = None
-    use_base64 = False
-    if 'image_id' in json_post:
-        image = decode_image(json_post['image_id'])
-    else:
-        use_base64 = True
-        image = decode_image_base64(json_post['image_base64'])
-
-    res_area, res_region, image_yolo = getWspotArea(image, json_post['mode'])
+    res_area, res_region, image_yolo = getWspotArea(image_path, json_post['mode'])
     if json_post['operator'] == 0:
         image_yolo = add_text_to_left_center(image_yolo)
     else:
         image_yolo = add_text_to_right_center(image_yolo)
 
+    # 随机一个 filename
+    folder_path, file_name = os.path.split(image_path)
+    file_name_without_ext, file_ext = os.path.splitext(file_name)
+    new_file_name = file_name_without_ext + '_result' + file_ext
+    new_file_path = os.path.join(folder_path, new_file_name)
+    image_yolo.save(new_file_path)
+
     result = {
         'area': res_area, # 面积
         'region': res_region, # 区域
+        'image_path': new_file_path
     }
 
-    # 随机一个 filename
-    filename = f'{int(time.time())}_{int(random.random() * 10000)}.jpg'
-    image_yolo.save(filename)
-
-    if use_base64:
-        result["image_base64"] = encode_image_base64(filename)
-    else:
-        result["image_id"] = encode_image(filename)
-
-    # 回传 json 包
-    # data = {
-    #     'image_id': image_id,
-    #     'area': res_area, # 面积
-    #     'region': res_region, # 区域
-    # }
     json_response = json.dumps(result)
     return json_response, 200, {"Content-Type":"application/json"}
 
 @app.route('/', methods=['GET'])
 def index():
     # 构建测试 json 包
-    image_base64 = encode_image_base64('./test.jpg')
+    # image_base64 = encode_image_base64('./test.jpg')
+    image_path = '/data/yaoyulin/model/flask/test.jpg'
     data = {
-        'image_base64': image_base64
+        'image_path': image_path,
+        'mode': 'M',
+        'operator': 0,
     }
     json_post = json.dumps(data)
-    response = requests.post(f'http://{sys.argv[1]}:{sys.argv[2]}/process_json', data=json_post)
+    response = requests.post(f'http://127.0.0.1:20000/process_json', data=json_post)
 
     # 拿到回传结果解析图像
     json_result = json.loads(response.text)
-    image = decode_image_base64(json_result['image_base64'])
-    image.save('result1.jpg')
+    print(json_result)
     return 'hello word'
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=20000, debug=True)
