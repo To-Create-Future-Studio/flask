@@ -2,10 +2,12 @@ import os
 import json
 import requests
 import sys
+import onnx
+import time
 
 from PIL import Image
 from ultralytics import YOLO
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 import cv2
 import numpy as np
 
@@ -31,21 +33,6 @@ def add_text_to_right_center(image, text="操作员侧", font_path="./simsun.ttc
     y = (image.height - textheight) / 2
     draw.text((x, y), text, fill=color, font=font)
     return image
-
-class ResourcePool:
-    def __init__(self, initial_resources):
-        self.resources = initial_resources
-        self.lock = threading.Lock()
-
-    def get_resource(self):
-        with self.lock:
-            if not self.resources:
-                self.resources.append((YOLO("./best.pt"), YOLO("./best_allocate.pt")))
-            return self.resources.pop()
-
-    def return_resource(self, resource):
-        with self.lock:
-            self.resources.append(resource)
 
 def draw_mask(image, mask_generateds, nms_index):
     mask_with_edges = np.zeros_like(image)
@@ -136,6 +123,21 @@ def getAreaDict(r):  # 修改整个函数
             res[box_key]['xyxy'] = rectangular_xyxy
     return res
 
+class ResourcePool:
+    def __init__(self, initial_resources):
+        self.resources = initial_resources
+        self.lock = threading.Lock()
+
+    def get_resource(self):
+        with self.lock:
+            if not self.resources:
+                self.resources.append((YOLO("./best.pt"), YOLO("./best_allocate.pt")))
+            return self.resources.pop()
+
+    def return_resource(self, resource):
+        with self.lock:
+            self.resources.append(resource)
+
 res = []
 for _ in range(1):
     res.append((YOLO("./best.pt"), YOLO("./best_allocate.pt")))
@@ -223,6 +225,48 @@ def filter_boxes_custom_nms(boxes, threshold=0.3):
 
 app = Flask(__name__)
 
+@app.route('/files/<filename>', methods=['POST', 'GET'])
+def uploaded_file(filename):
+    print(filename)
+    return send_from_directory('/mnt/data', filename)
+
+@app.route('/upload', methods=['POST', 'GET'])
+def upload_file():
+    file = request.files['file']
+    if file.filename == '':
+        return 'No selected file', 404
+
+    if file:
+        # 使用时间戳生成唯一的文件名
+        image_path = str(int(time.time())) + "_" + file.filename
+        image_path = os.path.join('/mnt/data', image_path)
+        os.makedirs(os.path.dirname(image_path), exist_ok=True)
+        file.save(image_path)
+
+        # 处理图像
+        res_area, res_region, image_yolo = getWspotArea(image_path, request.form.get('mode'))
+        if request.form.get('operator') == 0:
+            image_yolo = add_text_to_left_center(image_yolo)
+        else:
+            image_yolo = add_text_to_right_center(image_yolo)
+        
+        # 保存图像到同文件夹
+        folder_path, file_name = os.path.split(image_path)
+        file_name_without_ext, file_ext = os.path.splitext(file_name)
+        new_file_name = file_name_without_ext + '_result' + file_ext
+        new_file_path = os.path.join(folder_path, new_file_name)
+        image_yolo.save(new_file_path)
+
+        # 回传结果
+        result = {
+            'area': res_area, # 面积
+            'region': res_region, # 区域
+            'image_path': os.path.join('http://to-create-future.site:20000/files/', new_file_name)
+        }
+        print(result)
+        json_response = json.dumps(result)
+        return json_response, 200
+
 @app.route('/process_json', methods=['GET', 'POST'])
 def process_json():
     json_post = json.loads(request.get_data())
@@ -254,7 +298,7 @@ def process_json():
 def index():
     # 构建测试 json 包
     # image_base64 = encode_image_base64('./test.jpg')
-    image_path = '/data/yaoyulin/model/flask/test.jpg'
+    image_path = '/mnt/data/15.jpg'
     data = {
         'image_path': image_path,
         'mode': 'M',
