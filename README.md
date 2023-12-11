@@ -1,15 +1,12 @@
 ### Flask 后端逻辑
 
-后端接受 json 数据格式如下:
+后端接受小程序 upload 附带 formData 数据格式如下:
 ```python
-data = {
-    'image_path': image_path,
-    'mode': 'M',
-    'operator': 0,
-}
+formData: {
+    'mode': 'M',    // 修改上传
+    'operator': 0,  // 修改上传
+},
 ```
-
-- image_path:str 表示图像绝对路径
 - mode:str 'L'/'M'/'R' 表示拍照模式，分别代表左侧拍、中间拍、全部拍
 - operator:int 0/1 表示操作员侧，分别代表左操作员侧、右操作员侧
 
