@@ -51,14 +51,14 @@ def getRectangularArea(masks_data):
     return masks_data.sum().item()
 
 # 更新 isInclusion 函数
-def isInclusion(wspot_xyxy, rectangular_xyxy, mode):
+def isInclusion(wspot_xyxy, rectangular_xyxy, mode, operator):
     if wspot_xyxy == None or rectangular_xyxy == None:
         return False
-
+    
     res = False
     x1, y1, x2, y2 = wspot_xyxy
     x3, y3, x4, y4 = rectangular_xyxy
-    if (x3<=x1<=x4) and (y3<=y1<=y4):
+    if (x3-50<=x1<=x4+50) and (y3<=y1<=y4):
         wspot_x, wspot_y = (x1 + x2) / 2, (y1 + y2) / 2
         wspot_x_per, wspot_y_per = (wspot_x - x3) / (x4 - x3), (wspot_y - y3) / (y4 - y3)
         if mode == 'M':
@@ -91,7 +91,26 @@ def isInclusion(wspot_xyxy, rectangular_xyxy, mode):
             if val[0] <= wspot_x_per <= val[1]:
                 res = key
                 break
+        
+        operator_dict = {
+            'A3': 'B3',
+            'C3': 'F3',
+            'D3': 'E3',
+            'G3': 'M3',
+            'H3': 'L3',
+            'J3': 'K3',
+            'B3': 'A3',
+            'F3': 'C3',
+            'E3': 'D3',
+            'M3': 'G3',
+            'L3': 'H3',
+            'K3': 'J3'
+        }
+        if operator == 0 or operator == '0':
+            res = operator_dict[res]
+
     return res
+
 
 def getAreaDict(r):  # 修改整个函数
     res = {
@@ -143,7 +162,7 @@ for _ in range(1):
     res.append((YOLO("./best.pt"), YOLO("./best_allocate.pt")))
 rsp = ResourcePool(res)
 
-def getWspotArea(image, mode):
+def getWspotArea(image, mode, operator):
     model_wspot, model_allocate = rsp.get_resource()
     if 'gpu' in sys.argv:
         result_wspot = model_wspot(image, imgsz=2560, device='cuda', nms=True)[0]
@@ -166,9 +185,9 @@ def getWspotArea(image, mode):
             continue
         wspot_xyxy = box.xyxy.cpu().numpy().tolist()[0]
         for key, val in area_dict.items():
-            area_index = isInclusion(wspot_xyxy, val['xyxy'], mode)
+            area_index = isInclusion(wspot_xyxy, val['xyxy'], mode, operator)
             if area_index:
-                wspot_area = 0.25 * getRectangularArea(result_wspot.masks.data[index]) / val['rectangular_area'] * 0.87 # 修改此处
+                wspot_area = 0.25 * getRectangularArea(result_wspot.masks.data[index]) / val['rectangular_area'] * 0.85 # 修改此处
                 if mode != 'M':
                     wspot_area /= 2
                 res_area.append(wspot_area)
@@ -176,7 +195,7 @@ def getWspotArea(image, mode):
                 break
 
     # 合成图像
-    if result_allocate.masks is not None:
+    if len(res_area) != 0:
         image_array = draw_mask(result_wspot.orig_img, result_wspot.masks.data, nms_index)
     else:
         image_array = result_wspot.plot(labels=False, boxes=True)
@@ -230,6 +249,11 @@ def uploaded_file(filename):
     print(filename)
     return send_from_directory('/mnt/data', filename)
 
+@app.route('/static/<filename>', methods=['POST', 'GET'])
+def static_file(filename):
+    print(filename)
+    return send_from_directory('/mnt/static', filename)
+
 @app.route('/upload', methods=['POST', 'GET'])
 def upload_file():
     file = request.files['file']
@@ -244,8 +268,8 @@ def upload_file():
         file.save(image_path)
 
         # 处理图像
-        res_area, res_region, image_yolo = getWspotArea(image_path, request.form.get('mode'))
-        if request.form.get('operator') == 0:
+        res_area, res_region, image_yolo = getWspotArea(image_path, request.form.get('mode'), request.form.get('operator'))
+        if request.form.get('operator') == 0 or request.form.get('operator') == '0':
             image_yolo = add_text_to_left_center(image_yolo)
         else:
             image_yolo = add_text_to_right_center(image_yolo)
@@ -261,9 +285,8 @@ def upload_file():
         result = {
             'area': res_area, # 面积
             'region': res_region, # 区域
-            'image_path': os.path.join('http://to-create-future.site:20000/files/', new_file_name)
+            'image_path': os.path.join('http://101.43.189.50:20000/files/', new_file_name)
         }
-        print(result)
         json_response = json.dumps(result)
         return json_response, 200
 
@@ -298,7 +321,7 @@ def process_json():
 def index():
     # 构建测试 json 包
     # image_base64 = encode_image_base64('./test.jpg')
-    image_path = '/mnt/data/15.jpg'
+    image_path = '/mnt/data/1702278317_O3yAFLgDVPZLe5d30d933f560e68a8536da171a6671b.jpg'
     data = {
         'image_path': image_path,
         'mode': 'M',
